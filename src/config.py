@@ -20,11 +20,14 @@ GAME_DIR = r'e:\Steam\steamapps\common\HumanitZ'
 # Main game pak file
 PAK_FILE = os.path.join(GAME_DIR, 'HumanitZ', 'Content', 'Paks', 'pakchunk0-WindowsNoEditor.pak')
 
+# Project root directory (parent of src/)
+_PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
+
 # Default path to the PlayerIDMapped.txt file.
 # This file is exported from the HumanitZ dedicated server and maps
 # SteamID64 values to player display names.
-# Place it alongside these scripts, or pass --players <path> to override.
-DEFAULT_PLAYER_ID_FILE = os.path.join(_SCRIPT_DIR, 'PlayerIDMapped.txt')
+# Place it in the project root directory, or pass --players <path> to override.
+DEFAULT_PLAYER_ID_FILE = os.path.join(_PROJECT_ROOT, 'PlayerIDMapped.txt')
 
 # ============================================================================
 # AES ENCRYPTION KEY
