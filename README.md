@@ -13,7 +13,7 @@ Built through reverse-engineering the UE4 4.27 GVAS save format and the encrypte
 - [Scripts](#scripts)
   - [read_save.py — Save Analyzer](#read_savepy--save-analyzer)
   - [edit_profession.py — Profession Changer](#edit_professionpy--profession-changer)
-  - [edit_stats.py — Level/XP/Skill Points Editor](#edit_statspy--levelxpskill-points-editor)
+  - [edit_stats.py — Player Stats & Profession Editor](#edit_statspy--player-stats--profession-editor)
   - [scan_properties.py — Generic Property Scanner](#scan_propertiespy--generic-property-scanner)
   - [pak_reader.py — Pak File Reader/Extractor](#pak_readerpy--pak-file-readerextractor)
   - [extract_enums.py — Enum Extractor](#extract_enumspy--enum-extractor)
@@ -41,7 +41,10 @@ pip install pycryptodome
 # 2. Analyze a save file
 python read_save.py "path\to\Save_MAZADedicatedSave1.sav"
 
-# 3. Change a player's profession
+# 3. View/edit player stats and profession
+python edit_stats.py "path\to\Save_MAZADedicatedSave1.sav"
+
+# 4. Change a player's profession (standalone alternative)
 python edit_profession.py "path\to\Save_MAZADedicatedSave1.sav"
 ```
 
@@ -66,7 +69,7 @@ HumanitZ_SaveEditor/
 ├── utils.py             # Core utilities: GVAS parser, AES, binary search
 ├── read_save.py         # Analyze a save file (read-only)
 ├── edit_profession.py   # Interactive profession editor
-├── edit_stats.py        # Level, XP, and skill points editor
+├── edit_stats.py        # Player stats & profession editor
 ├── scan_properties.py   # Generic property/string scanner
 ├── pak_reader.py        # Pak file index reader and file extractor
 ├── extract_enums.py     # Extract Enum_Professions from pak, parse mapping
@@ -127,9 +130,9 @@ python edit_profession.py "C:\path\to\save.sav"
 
 ---
 
-### `edit_stats.py` — Level/XP/Skill Points Editor
+### `edit_stats.py` — Player Stats & Profession Editor
 
-View and edit player Level, XP, and Skill Points.
+View and edit player Level, XP, Skill Points, and Profession.
 
 ```powershell
 python edit_stats.py "C:\path\to\save.sav"
@@ -137,28 +140,33 @@ python edit_stats.py "C:\path\to\save.sav"
 
 **Features:**
 - Finds all players automatically via SteamID struct boundaries (more accurate than distance-based matching)
-- Displays current stats for every player:
+- Displays current stats and profession for every player:
+  - **Profession** (ByteProperty/Enum) — active profession (StartingPerk)
   - **Level** (IntProperty) — character level
   - **Skill Points** (IntProperty) — available/unspent skill points
   - **XP Gained** (IntProperty) — total lifetime XP earned
   - **Required XP** (FloatProperty) — XP needed for the next level
   - **Current XP** (FloatProperty) — progress towards the next level
-- Edit individual stats or batch-edit Level + Skill Points + XP at once
-- All edits are **fixed-size in-place overwrites** (int32/float32), so the file size never changes — completely safe
+- Edit individual stats, batch-edit Level + Skill Points + XP, or change profession
+- Stat edits are **fixed-size in-place overwrites** (int32/float32) — file size never changes
+- Profession swaps within the same digit group (0-9 or 10-16) are same-length and completely safe
+- Cross-group profession swaps (e.g., NE5 ↔ NE14) change the file size by 1 byte, handled automatically
 - Creates a timestamped backup before the first modification
 
 **Save structure properties:**
 
 | Property | Type | Description |
 |----------|------|-------------|
+| `StartingPerk_94_283EA7...` | ByteProperty (Enum) | Active profession |
 | `Level_15_CF9C856C...` | IntProperty | Character level |
 | `SkillsPoint_14_28A534...` | IntProperty | Available skill points |
 | `XPGained_9_DBB2D8FA...` | IntProperty | Total XP earned |
 | `Required_3_9EC34DB9...` | FloatProperty | XP needed for next level |
 | `Current_4_EBCD0EF2...` | FloatProperty | Current XP progress |
 
-These properties live inside `Struct_SkillState` → `S_ExpInfo`, which is nested within
-each player's `ST_SaveDropIn` struct in the `DropInSaves` array.
+The stat properties live inside `Struct_SkillState` → `S_ExpInfo`, and the profession
+is stored as `StartingPerk_94` (a `ByteProperty` with `Enum_Professions` enum type).
+Both are nested within each player's `ST_SaveDropIn` struct in the `DropInSaves` array.
 
 ---
 

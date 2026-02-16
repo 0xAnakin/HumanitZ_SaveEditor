@@ -9,9 +9,9 @@ Usage:
 If no path is given, uses the default from config.py.
 The tool will:
   1. Locate all players by their SteamID properties (struct boundaries)
-  2. Read Level, SkillsPoint, XPGained, Required XP, and Current XP
+  2. Read Level, SkillsPoint, XPGained, Required XP, Current XP, and Profession
   3. Display a summary for each player
-  4. Let you select a player and modify their stats
+  4. Let you select a player and modify their stats or profession
   5. Create a timestamped backup before modifying
 
 Property details:
@@ -20,9 +20,12 @@ Property details:
   - XPGained (IntProperty):  Total XP earned ever (lifetime)
   - Required XP (FloatProperty): XP needed to reach the next level
   - Current XP (FloatProperty):  XP progress towards the next level
+  - StartingPerk (ByteProperty/Enum): Active profession
 
-All edits are fixed-size in-place overwrites (int32 or float32),
-so file size never changes. This is completely safe.
+Stat edits are fixed-size in-place overwrites (int32 or float32),
+so file size never changes. Profession edits within the same digit
+group (0-9 or 10-16) are also same-length. Cross-group swaps change
+file size by 1 byte, which is handled automatically.
 """
 
 import sys
@@ -33,7 +36,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SAVE_FILE, PLAYERS
+from config import DEFAULT_SAVE_FILE, PLAYERS, PROFESSIONS
 from utils import load_save, write_save
 
 
@@ -42,6 +45,9 @@ from utils import load_save, write_save
 # ============================================================================
 
 STEAMID_PROP = b'SteamID_67_6AFAA3B54A4447673EFF4D94BA0F84A7'
+
+STARTING_PERK_PROP = b'StartingPerk_94_283EA71B427B7E97C43350818608A5E4'
+ENUM_PREFIX = 'Enum_Professions::NewEnumerator'
 
 STAT_PROPERTIES = {
     'level': {
@@ -141,6 +147,43 @@ def find_players(data: bytes) -> list[dict]:
                 'type': prop['type'],
             }
 
+        # Read profession (ByteProperty with Enum_Professions)
+        perk_idx = region.find(STARTING_PERK_PROP)
+        if perk_idx == -1:
+            player['profession'] = None
+        else:
+            abs_off = player['struct_start'] + perk_idx
+            name_end = abs_off + len(STARTING_PERK_PROP) + 1
+            tlen = struct.unpack_from('<i', data, name_end)[0]
+            type_end = name_end + 4 + tlen
+            # ByteProperty layout: size(8) + enum_type(FString) + separator(1) + value(FString)
+            size_off = type_end
+            size_val = struct.unpack_from('<Q', data, size_off)[0]
+            enum_type_off = size_off + 8
+            enum_type_len = struct.unpack_from('<i', data, enum_type_off)[0]
+            separator_off = enum_type_off + 4 + enum_type_len
+            val_len_off = separator_off + 1
+            val_len = struct.unpack_from('<i', data, val_len_off)[0]
+            val_str_off = val_len_off + 4
+            val_str = data[val_str_off:val_str_off + val_len - 1].decode('ascii', 'replace')
+            # Extract the enum number
+            enum_num = -1
+            if ENUM_PREFIX in val_str:
+                try:
+                    enum_num = int(val_str[len(ENUM_PREFIX):])
+                except ValueError:
+                    pass
+            player['profession'] = {
+                'enum_num': enum_num,
+                'enum_str': val_str,
+                'display': PROFESSIONS.get(enum_num, f'Unknown({enum_num})'),
+                'val_len_off': val_len_off,    # offset of the value FString length prefix
+                'val_str_off': val_str_off,    # offset of the value FString data
+                'val_len': val_len,            # current FString length (incl. null)
+                'size_off': size_off,          # offset of the ByteProperty size field
+                'size_val': size_val,          # current size value
+            }
+
     return steamid_locs
 
 
@@ -155,6 +198,13 @@ def show_players(players: list[dict]) -> None:
     print(f'{"=" * 60}')
     for i, p in enumerate(players):
         print(f'\n  [{i + 1}] {p["name"]} (SteamID: {p["steam_id"]})')
+        # Show profession
+        prof = p.get('profession')
+        if prof:
+            print(f'      {"Profession":30s}: {prof["display"]} (NE{prof["enum_num"]})')
+        else:
+            print(f'      {"Profession":30s}: NOT FOUND')
+        # Show stats
         for key, prop in STAT_PROPERTIES.items():
             stat = p['stats'].get(key)
             if stat is None:
@@ -170,10 +220,8 @@ def show_players(players: list[dict]) -> None:
 # EDITING
 # ============================================================================
 
-def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
-                      backup_created: list) -> bytes:
-    """Write a new value for a stat property. Returns modified data."""
-    # Create backup only once per session
+def _ensure_backup(save_file: str, backup_created: list) -> None:
+    """Create a timestamped backup (once per session)."""
     if not backup_created[0]:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_path = f'{save_file}.backup_{timestamp}'
@@ -181,8 +229,13 @@ def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
         print(f'  Backup created: {backup_path}')
         backup_created[0] = True
 
+
+def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
+                      backup_created: list) -> bytes:
+    """Write a new value for a stat property. Returns modified data."""
+    _ensure_backup(save_file, backup_created)
+
     offset = stat['offset']
-    old_value = stat['value']
 
     if stat['type'] == 'int':
         new_bytes = struct.pack('<i', int(new_value))
@@ -192,6 +245,54 @@ def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
         data = data[:offset] + new_bytes + data[offset + 4:]
 
     write_save(save_file, data)
+    return data
+
+
+def apply_profession_change(data: bytes, prof: dict, new_num: int,
+                            save_file: str, backup_created: list) -> bytes:
+    """Change a player's profession enum value. Returns modified data."""
+    _ensure_backup(save_file, backup_created)
+
+    old_enum_str = prof['enum_str']
+    new_enum_str = f'{ENUM_PREFIX}{new_num}'
+
+    old_val_bytes = old_enum_str.encode('ascii') + b'\x00'
+    new_val_bytes = new_enum_str.encode('ascii') + b'\x00'
+
+    old_display = prof['display']
+    new_display = PROFESSIONS.get(new_num, f'Unknown({new_num})')
+
+    if len(old_val_bytes) == len(new_val_bytes):
+        # Same length: simple in-place swap (safest)
+        data = (data[:prof['val_str_off']] +
+                new_val_bytes +
+                data[prof['val_str_off'] + len(old_val_bytes):])
+        write_save(save_file, data)
+        print(f'  Done! {old_display} -> {new_display} (same-length swap)')
+    else:
+        # Different length: update value FString length prefix and size field
+        new_val_len = len(new_enum_str) + 1  # +1 for null
+        old_val_len = prof['val_len']
+        delta = new_val_len - old_val_len
+
+        # Update the value FString: length prefix + string + null
+        old_full = struct.pack('<i', old_val_len) + old_val_bytes
+        new_full = struct.pack('<i', new_val_len) + new_val_bytes
+        data = (data[:prof['val_len_off']] +
+                new_full +
+                data[prof['val_len_off'] + len(old_full):])
+
+        # Update the ByteProperty size field
+        new_size = prof['size_val'] + delta
+        data = (data[:prof['size_off']] +
+                struct.pack('<Q', new_size) +
+                data[prof['size_off'] + 8:])
+
+        write_save(save_file, data)
+        print(f'  Done! {old_display} -> {new_display}')
+        print(f'  Note: String length changed ({old_val_len} -> {new_val_len}).'
+              f' File size changed by {delta:+d} byte(s).')
+
     return data
 
 
@@ -246,6 +347,9 @@ def main():
             continue
 
         player = players[player_idx]
+        prof = player.get('profession')
+        prof_display = prof['display'] if prof else 'N/A'
+
         print(f'\n  Selected: {player["name"]}')
         print(f'  What to change?')
         print(f'    1. Level           (current: {_fmt_stat(player, "level")})')
@@ -254,6 +358,7 @@ def main():
         print(f'    4. Current XP      (current: {_fmt_stat(player, "current_xp")})')
         print(f'    5. Required XP     (current: {_fmt_stat(player, "required_xp")})')
         print(f'    6. Set all (Level + Skill Points + XP)')
+        print(f'    7. Profession      (current: {prof_display})')
         print(f'    b. Back')
 
         stat_choice = input('  Choice: ').strip().lower()
@@ -267,6 +372,49 @@ def main():
             '4': 'current_xp',
             '5': 'required_xp',
         }
+
+        if stat_choice == '7':
+            # Change profession
+            if prof is None:
+                print('  Profession not found for this player.')
+                continue
+            print(f'\n  Current profession: {prof["display"]} (NE{prof["enum_num"]})')
+            print(f'\n  Available professions:')
+            for num, name in sorted(PROFESSIONS.items()):
+                group = '[1-digit]' if num < 10 else '[2-digit]'
+                marker = ' <-- current' if num == prof['enum_num'] else ''
+                print(f'    {num:2d}: {name:<30s} {group}{marker}')
+            try:
+                new_input = input(f'\n  New profession # (0-{max(PROFESSIONS.keys())}): ').strip()
+                new_num = int(new_input)
+                if new_num not in PROFESSIONS:
+                    print(f'  Invalid. Choose 0-{max(PROFESSIONS.keys())}.')
+                    continue
+            except ValueError:
+                print('  Invalid number.')
+                continue
+            if new_num == prof['enum_num']:
+                print('  Same profession, no change needed.')
+                continue
+
+            new_display = PROFESSIONS[new_num]
+            old_digits = len(str(prof['enum_num']))
+            new_digits = len(str(new_num))
+            safety = ('SAFE (same string length)' if old_digits == new_digits
+                      else 'OK (string length changes, handled automatically)')
+            print(f'\n  Change: {prof["display"]} (NE{prof["enum_num"]}) -> '
+                  f'{new_display} (NE{new_num})')
+            print(f'  Safety: {safety}')
+            confirm = input('  Confirm? (y/n): ').strip().lower()
+            if confirm != 'y':
+                print('  Cancelled.')
+                continue
+
+            data = apply_profession_change(data, prof, new_num,
+                                           save_file, backup_created)
+            players = find_players(data)
+            show_players(players)
+            continue
 
         if stat_choice == '6':
             # Set all main stats at once
