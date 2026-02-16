@@ -13,6 +13,7 @@ Built through reverse-engineering the UE4 4.27 GVAS save format and the encrypte
 - [Scripts](#scripts)
   - [read_save.py — Save Analyzer](#read_savepy--save-analyzer)
   - [edit_profession.py — Profession Changer](#edit_professionpy--profession-changer)
+  - [edit_stats.py — Level/XP/Skill Points Editor](#edit_statspy--levelxpskill-points-editor)
   - [scan_properties.py — Generic Property Scanner](#scan_propertiespy--generic-property-scanner)
   - [pak_reader.py — Pak File Reader/Extractor](#pak_readerpy--pak-file-readerextractor)
   - [extract_enums.py — Enum Extractor](#extract_enumspy--enum-extractor)
@@ -65,6 +66,7 @@ HumanitZ_SaveEditor/
 ├── utils.py             # Core utilities: GVAS parser, AES, binary search
 ├── read_save.py         # Analyze a save file (read-only)
 ├── edit_profession.py   # Interactive profession editor
+├── edit_stats.py        # Level, XP, and skill points editor
 ├── scan_properties.py   # Generic property/string scanner
 ├── pak_reader.py        # Pak file index reader and file extractor
 ├── extract_enums.py     # Extract Enum_Professions from pak, parse mapping
@@ -122,6 +124,41 @@ python edit_profession.py "C:\path\to\save.sav"
 |-----------|--------|---------|
 | Same digit count (0↔9 or 10↔16) | ✅ SAFE — identical byte lengths | NE14 → NE13 |
 | Cross digit count (0-9 ↔ 10-16) | ⚠️ CAUTION — length prefix updated, file size changes by 1 byte | NE3 → NE14 |
+
+---
+
+### `edit_stats.py` — Level/XP/Skill Points Editor
+
+View and edit player Level, XP, and Skill Points.
+
+```powershell
+python edit_stats.py "C:\path\to\save.sav"
+```
+
+**Features:**
+- Finds all players automatically via SteamID struct boundaries (more accurate than distance-based matching)
+- Displays current stats for every player:
+  - **Level** (IntProperty) — character level
+  - **Skill Points** (IntProperty) — available/unspent skill points
+  - **XP Gained** (IntProperty) — total lifetime XP earned
+  - **Required XP** (FloatProperty) — XP needed for the next level
+  - **Current XP** (FloatProperty) — progress towards the next level
+- Edit individual stats or batch-edit Level + Skill Points + XP at once
+- All edits are **fixed-size in-place overwrites** (int32/float32), so the file size never changes — completely safe
+- Creates a timestamped backup before the first modification
+
+**Save structure properties:**
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `Level_15_CF9C856C...` | IntProperty | Character level |
+| `SkillsPoint_14_28A534...` | IntProperty | Available skill points |
+| `XPGained_9_DBB2D8FA...` | IntProperty | Total XP earned |
+| `Required_3_9EC34DB9...` | FloatProperty | XP needed for next level |
+| `Current_4_EBCD0EF2...` | FloatProperty | Current XP progress |
+
+These properties live inside `Struct_SkillState` → `S_ExpInfo`, which is nested within
+each player's `ST_SaveDropIn` struct in the `DropInSaves` array.
 
 ---
 
@@ -304,7 +341,14 @@ BP_HumanitzSave_C
 │   │   │   └── Value: "Enum_Professions::NewEnumeratorN"
 │   │   ├── UnlockedProfessionArr_17_2528BAE945B7A3B1A49D7893990D13BF (ArrayProperty)
 │   │   │   └── Array of ByteProperty (Enum_Professions values)
-│   │   ├── (health, inventory, skills, position, etc.)
+│   │   ├── Exp_89_6575714F4C6610C794D883A9D936886E (StructProperty: S_ExpInfo)
+│   │   │   ├── Required_3_... (FloatProperty — XP for next level)
+│   │   │   └── Current_4_...  (FloatProperty — XP progress)
+│   │   ├── XPGained_9_DBB2D8FA... (IntProperty — total XP)
+│   │   ├── SkillsPoint_14_28A534... (IntProperty — available points)
+│   │   ├── Level_15_CF9C856C... (IntProperty — character level)
+│   │   ├── TreeData_18_EA159E9C... (StructProperty: S_SkillTreeSaveData)
+│   │   ├── (health, inventory, position, etc.)
 │   │   └── ...
 │   ├── Player 1
 │   │   └── (same structure)
@@ -316,6 +360,12 @@ BP_HumanitzSave_C
 - `StartingPerk_94_*` — The player's active/chosen profession (ByteProperty, Enum_Professions)
 - `UnlockedProfessionArr_17_*` — Professions unlocked during gameplay (ArrayProperty)
 - `SteamID_67_*` — Player's Steam ID string (StrProperty)
+- `Level_15_*` — Character level (IntProperty)
+- `SkillsPoint_14_*` — Available/unspent skill points (IntProperty)
+- `XPGained_9_*` — Total lifetime XP earned (IntProperty)
+- `Required_3_*` — XP needed for next level (FloatProperty, inside `S_ExpInfo`)
+- `Current_4_*` — XP progress towards next level (FloatProperty, inside `S_ExpInfo`)
+- `TreeData_18_*` — Skill tree data (StructProperty: `S_SkillTreeSaveData`)
 
 ### Pak File Format (v11)
 
@@ -517,8 +567,8 @@ From `PlayerIDMapped.txt`:
 | Johnny Kopo | 76561198144568733 | 0002e1af-75a4-491c-ae70-b32049427e21 |
 
 **Last analyzed (from server save):**
-- **0xAnakin:** Active profession = **Thief** (NewEnumerator14)
-- **raybanme:** Active profession = **Thief** (NewEnumerator14), also unlocked MilitaryVet and FireFighter
+- **0xAnakin:** Level 61, 53 Skill Points, Active profession = **Thief** (NE14)
+- **raybanme:** Level 64, 64 Skill Points, Active profession = **Thief** (NE14), unlocked MilitaryVet + FireFighter
 - **Johnny Kopo:** Not present in server save file
 
 ---
