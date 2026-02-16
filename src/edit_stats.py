@@ -248,11 +248,16 @@ def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
     return data
 
 
-def apply_profession_change(data: bytes, prof: dict, new_num: int,
+def apply_profession_change(data: bytes, player: dict, new_num: int,
                             save_file: str, backup_created: list) -> bytes:
-    """Change a player's profession enum value. Returns modified data."""
+    """Change a player's starting profession enum value. Returns modified data.
+    
+    Only modifies the StartingPerk property. The UnlockedProfessionArr
+    (professions unlocked at level 30 and 60) is left untouched.
+    """
     _ensure_backup(save_file, backup_created)
 
+    prof = player['profession']
     old_enum_str = prof['enum_str']
     new_enum_str = f'{ENUM_PREFIX}{new_num}'
 
@@ -267,8 +272,7 @@ def apply_profession_change(data: bytes, prof: dict, new_num: int,
         data = (data[:prof['val_str_off']] +
                 new_val_bytes +
                 data[prof['val_str_off'] + len(old_val_bytes):])
-        write_save(save_file, data)
-        print(f'  Done! {old_display} -> {new_display} (same-length swap)')
+        print(f'  StartingPerk: {old_display} -> {new_display} (same-length swap)')
     else:
         # Different length: update value FString length prefix and size field
         new_val_len = len(new_enum_str) + 1  # +1 for null
@@ -288,11 +292,12 @@ def apply_profession_change(data: bytes, prof: dict, new_num: int,
                 struct.pack('<Q', new_size) +
                 data[prof['size_off'] + 8:])
 
-        write_save(save_file, data)
-        print(f'  Done! {old_display} -> {new_display}')
+        print(f'  StartingPerk: {old_display} -> {new_display}')
         print(f'  Note: String length changed ({old_val_len} -> {new_val_len}).'
               f' File size changed by {delta:+d} byte(s).')
 
+    write_save(save_file, data)
+    print(f'  Done! Saved to {save_file}')
     return data
 
 
@@ -419,7 +424,7 @@ def main():
                 print('  Cancelled.')
                 continue
 
-            data = apply_profession_change(data, prof, new_num,
+            data = apply_profession_change(data, player, new_num,
                                            save_file, backup_created)
             players = find_players(data, known_players)
             show_players(players)
