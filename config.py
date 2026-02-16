@@ -5,21 +5,26 @@ Central configuration for paths, keys, and game data constants.
 Edit the values in this file to match your environment.
 """
 
+import os
+
 # ============================================================================
 # PATHS
 # ============================================================================
 
-# Default dedicated server save file path
-DEFAULT_SAVE_FILE = r'c:\Users\p0ffer\Desktop\SaveGames\SaveList\Default\Save_MAZADedicatedSave1.sav'
+# Directory where this script lives (used for relative path resolution)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # HumanitZ game installation directory
 GAME_DIR = r'e:\Steam\steamapps\common\HumanitZ'
 
 # Main game pak file
-PAK_FILE = GAME_DIR + r'\HumanitZ\Content\Paks\pakchunk0-WindowsNoEditor.pak'
+PAK_FILE = os.path.join(GAME_DIR, 'HumanitZ', 'Content', 'Paks', 'pakchunk0-WindowsNoEditor.pak')
 
-# Local save directory (single player)
-LOCAL_SAVE_DIR = r'C:\Users\p0ffer\AppData\Local\HumanitZ\Saved\SaveGames'
+# Default path to the PlayerIDMapped.txt file.
+# This file is exported from the HumanitZ dedicated server and maps
+# SteamID64 values to player display names.
+# Place it alongside these scripts, or pass --players <path> to override.
+DEFAULT_PLAYER_ID_FILE = os.path.join(_SCRIPT_DIR, 'PlayerIDMapped.txt')
 
 # ============================================================================
 # AES ENCRYPTION KEY
@@ -59,27 +64,17 @@ PROFESSIONS = {
     8:  'SundayFisherman',
     9:  'CarSalesman',
     10: 'Outdoorsman',
-    11: 'Chemist',
-    12: 'EMT',
-    13: 'MilitaryVet',
-    14: 'Thief',
-    15: 'FireFighter',
-    16: 'ElectricalEngineer',
+    # Note: NewEnumerator11 does not exist in the game enum (gap in numbering)
+    12: 'Chemist',
+    13: 'EMT',
+    14: 'MilitaryVet',
+    15: 'Thief',
+    16: 'FireFighter',
+    17: 'ElectricalEngineer',
 }
 
 # Reverse lookup: name -> enum index
 PROFESSION_BY_NAME = {v.lower(): k for k, v in PROFESSIONS.items()}
-
-# ============================================================================
-# GAME DATA: Known Players (edit to match your server)
-# ============================================================================
-# Format: SteamID64 -> display name
-# You can find SteamID64 from the PlayerIDMapped.txt file or in-game admin tools.
-PLAYERS = {
-    '76561198142478391': '0xAnakin',
-    '76561198108344973': 'raybanme',
-    '76561198144568733': 'Johnny Kopo',
-}
 
 # ============================================================================
 # SAVE FILE FORMAT CONSTANTS

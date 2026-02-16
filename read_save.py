@@ -9,34 +9,31 @@ Reads a dedicated server save file and reports:
   - Property locations for editing
 
 Usage:
-    python read_save.py [save_file_path]
-
-If no path is given, uses the default from config.py.
+    python read_save.py <save_file> [--players <PlayerIDMapped.txt>]
 """
 
 import sys
 import os
-import struct
+import argparse
 
-# Allow running from the script's own directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SAVE_FILE, PROFESSIONS, PLAYERS
+from config import PROFESSIONS, DEFAULT_PLAYER_ID_FILE
 from utils import (
-    load_save, parse_gvas_header, scan_enum_properties,
-    find_all_bytes, find_nearest_player, read_null_terminated,
+    load_save, load_players, parse_gvas_header, scan_enum_properties,
+    find_all_bytes, find_nearest_player,
 )
 
 
 def format_profession(enum_num: int) -> str:
-    """Return 'DisplayName (NewEnumeratorN)' for a given enum number."""
+    """Return 'DisplayName (NEn)' for a given enum number."""
     name = PROFESSIONS.get(enum_num, f'Unknown({enum_num})')
-    return f'{name} (NewEnumerator{enum_num})'
+    return f'{name} (NE{enum_num})'
 
 
-def analyze_save(filepath: str, players: dict = None) -> dict:
+def analyze_save(filepath: str, players: dict) -> dict:
     """Analyze a HumanitZ save file and return structured results.
-    
+
     Returns dict with:
         header: GvasHeader object
         size: file size in bytes
@@ -44,9 +41,6 @@ def analyze_save(filepath: str, players: dict = None) -> dict:
         profession_entries: list of entry dicts augmented with player info
         player_summary: {player_name: {active: str, unlocked: [str]}}
     """
-    if players is None:
-        players = PLAYERS
-
     data = load_save(filepath)
     header = parse_gvas_header(data)
     entries = scan_enum_properties(data)
@@ -79,10 +73,10 @@ def analyze_save(filepath: str, players: dict = None) -> dict:
                 'unlocked': unlocked,
             }
 
-    # Check for players not in the save
+    # Mark players not present in the save
     for name in players.values():
         if name not in player_summary:
-            player_summary[name] = None  # Not present in save
+            player_summary[name] = None
 
     return {
         'header': header,
@@ -93,7 +87,7 @@ def analyze_save(filepath: str, players: dict = None) -> dict:
     }
 
 
-def print_report(filepath: str, results: dict) -> None:
+def print_report(filepath: str, results: dict, players: dict) -> None:
     """Print a formatted report of the save analysis."""
     header = results['header']
     size = results['size']
@@ -117,7 +111,7 @@ def print_report(filepath: str, results: dict) -> None:
     print('  Player SteamID Presence')
     print('-' * 70)
     for steam_id, locs in results['player_locations'].items():
-        name = PLAYERS.get(steam_id, steam_id)
+        name = players.get(steam_id, steam_id)
         status = f'{len(locs)} occurrence(s)' if locs else 'NOT FOUND in save'
         print(f'  {name} ({steam_id}): {status}')
     print()
@@ -160,27 +154,35 @@ def print_report(filepath: str, results: dict) -> None:
 
     # Available professions reference
     print('-' * 70)
-    print('  Available Professions (for editing)')
+    print('  Available Professions')
     print('-' * 70)
     for num, name in sorted(PROFESSIONS.items()):
         digit_group = '1-digit' if num < 10 else '2-digit'
         print(f'  {num:2d}: {name:<30s} [{digit_group}]')
     print()
-    print('  Note: Swapping within the same digit group (0-9 or 10-16) is safest')
+    print('  Note: Swapping within the same digit group (0-9 or 10+) is safest')
     print('        because the enum string length stays the same.')
     print()
 
 
 def main():
-    filepath = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SAVE_FILE
+    parser = argparse.ArgumentParser(
+        description='Analyze a HumanitZ save file — show players, professions, and stats'
+    )
+    parser.add_argument('save_file', help='Path to a HumanitZ .sav file')
+    parser.add_argument('--players', default=DEFAULT_PLAYER_ID_FILE,
+                        help='Path to PlayerIDMapped.txt (default: %(default)s)')
+    args = parser.parse_args()
 
-    if not os.path.exists(filepath):
-        print(f'Error: Save file not found: {filepath}')
-        print(f'Usage: python read_save.py [save_file_path]')
+    if not os.path.exists(args.save_file):
+        print(f'Error: Save file not found: {args.save_file}')
         sys.exit(1)
 
-    results = analyze_save(filepath)
-    print_report(filepath, results)
+    players = load_players(args.players)
+    print(f'Loaded {len(players)} player(s) from {args.players}')
+
+    results = analyze_save(args.save_file, players)
+    print_report(args.save_file, results, players)
 
 
 if __name__ == '__main__':

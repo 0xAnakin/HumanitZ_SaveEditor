@@ -5,14 +5,12 @@ Scans a save file for any UE4 property type and reports all matches.
 Useful for finding other editable values beyond professions.
 
 Usage:
-    python scan_properties.py [save_file] [--search <string>]
+    python scan_properties.py <save_file> [--search <string>]
 
 Examples:
-    python scan_properties.py --search Health
-    python scan_properties.py --search Stamina
-    python scan_properties.py --search SkillPoints
-    python scan_properties.py --search Season
-    python scan_properties.py --search Level
+    python scan_properties.py save.sav --search Health
+    python scan_properties.py save.sav --search Stamina
+    python scan_properties.py save.sav --search Level
 """
 
 import sys
@@ -21,7 +19,6 @@ import struct
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SAVE_FILE
 from utils import load_save, parse_gvas_header, find_all_bytes
 
 
@@ -94,8 +91,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='Scan HumanitZ save files for properties and strings'
     )
-    parser.add_argument('save_file', nargs='?', default=DEFAULT_SAVE_FILE,
-                        help='Path to save file')
+    parser.add_argument('save_file', help='Path to a HumanitZ .sav file')
     parser.add_argument('--search', '-s', metavar='STRING',
                         help='Search for a specific string')
     parser.add_argument('--properties', '-p', action='store_true',

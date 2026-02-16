@@ -2,12 +2,13 @@
 HumanitZ Save Editor - Core Utilities
 =======================================
 Shared functions for reading GVAS save files, AES decryption,
-binary searching, and UE4 data parsing.
+binary searching, UE4 data parsing, and player ID loading.
 """
 
 import struct
 import io
 import os
+import re
 
 try:
     from Crypto.Cipher import AES as PyCryptoAES
@@ -274,3 +275,58 @@ def write_save(filepath: str, data: bytes) -> None:
     """Write raw bytes to a save file."""
     with open(filepath, 'wb') as f:
         f.write(data)
+
+
+# ============================================================================
+# PLAYER ID LOADING
+# ============================================================================
+
+def load_players(filepath: str) -> dict[str, str]:
+    """Load player SteamID -> display name mapping from a PlayerIDMapped.txt file.
+    
+    The file is exported from a HumanitZ dedicated server. Each line has the format:
+        <SteamID64>_+_|<InternalID>@<DisplayName>
+    
+    Example:
+        76561198142478391_+_|00028ce6e7d54af2968d8aff2e694375@0xAnakin
+    
+    Args:
+        filepath: Path to the PlayerIDMapped.txt file.
+    
+    Returns:
+        Dict mapping SteamID64 string -> display name string.
+    
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        ValueError: If the file contains no valid player entries.
+    """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(
+            f'Player ID file not found: {filepath}\n'
+            f'Copy PlayerIDMapped.txt from your HumanitZ dedicated server\n'
+            f'(usually in the server\'s Saved/SaveGames/ directory).'
+        )
+    
+    players = {}
+    line_pattern = re.compile(r'^(\d{10,20})_\+_\|[0-9a-f]+@(.+)$')
+    
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            m = line_pattern.match(line)
+            if m:
+                steam_id = m.group(1)
+                display_name = m.group(2)
+                players[steam_id] = display_name
+            else:
+                print(f'  Warning: Skipping malformed line {line_num} in {filepath}')
+    
+    if not players:
+        raise ValueError(
+            f'No valid player entries found in {filepath}\n'
+            f'Expected format: <SteamID64>_+_|<InternalID>@<DisplayName>'
+        )
+    
+    return players

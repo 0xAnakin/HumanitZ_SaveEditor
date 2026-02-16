@@ -4,9 +4,8 @@ HumanitZ Save Editor - Player Stats Editor
 View and edit player Level, XP, and Skill Points in a HumanitZ save file.
 
 Usage:
-    python edit_stats.py [save_file_path]
+    python edit_stats.py <save_file> [--players <PlayerIDMapped.txt>]
 
-If no path is given, uses the default from config.py.
 The tool will:
   1. Locate all players by their SteamID properties (struct boundaries)
   2. Read Level, SkillsPoint, XPGained, Required XP, Current XP, and Profession
@@ -24,7 +23,7 @@ Property details:
 
 Stat edits are fixed-size in-place overwrites (int32 or float32),
 so file size never changes. Profession edits within the same digit
-group (0-9 or 10-16) are also same-length. Cross-group swaps change
+group (0-9 or 10+) are also same-length. Cross-group swaps change
 file size by 1 byte, which is handled automatically.
 """
 
@@ -32,12 +31,13 @@ import sys
 import os
 import struct
 import shutil
+import argparse
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SAVE_FILE, PLAYERS, PROFESSIONS
-from utils import load_save, write_save
+from config import DEFAULT_PLAYER_ID_FILE, PROFESSIONS
+from utils import load_save, load_players, write_save
 
 
 # ============================================================================
@@ -82,7 +82,7 @@ STAT_PROPERTIES = {
 # PLAYER DISCOVERY
 # ============================================================================
 
-def find_players(data: bytes) -> list[dict]:
+def find_players(data: bytes, players: dict) -> list[dict]:
     """Find all players by locating SteamID properties in the save.
     
     Returns a list of dicts with:
@@ -104,7 +104,7 @@ def find_players(data: bytes) -> list[dict]:
         if 0 < val_len < 200:
             val_str = data[val_start + 4:val_start + 4 + val_len - 1].decode('ascii', 'replace')
             steam_id = val_str.split('_+_')[0]
-            player_name = PLAYERS.get(steam_id, f'Unknown({steam_id})')
+            player_name = players.get(steam_id, f'Unknown({steam_id})')
             steamid_locs.append({
                 'name': player_name,
                 'steam_id': steam_id,
@@ -297,18 +297,27 @@ def apply_profession_change(data: bytes, prof: dict, new_num: int,
 
 
 def main():
-    save_file = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SAVE_FILE
+    parser = argparse.ArgumentParser(
+        description='View and edit player stats and professions in a HumanitZ save file'
+    )
+    parser.add_argument('save_file', help='Path to a HumanitZ .sav file')
+    parser.add_argument('--players', default=DEFAULT_PLAYER_ID_FILE,
+                        help='Path to PlayerIDMapped.txt (default: %(default)s)')
+    args = parser.parse_args()
 
+    save_file = args.save_file
     if not os.path.exists(save_file):
         print(f'Error: Save file not found: {save_file}')
-        print(f'Usage: python edit_stats.py [save_file_path]')
         sys.exit(1)
+
+    known_players = load_players(args.players)
+    print(f'Loaded {len(known_players)} player(s) from {args.players}')
 
     data = load_save(save_file)
     print(f'Save file: {save_file}')
     print(f'Size: {len(data):,} bytes')
 
-    players = find_players(data)
+    players = find_players(data, known_players)
     if not players:
         print('No players found in save file.')
         return
@@ -333,7 +342,7 @@ def main():
             print('Exiting.')
             return
         if choice == 'list':
-            players = find_players(data)
+            players = find_players(data, known_players)
             show_players(players)
             continue
 
@@ -412,7 +421,7 @@ def main():
 
             data = apply_profession_change(data, prof, new_num,
                                            save_file, backup_created)
-            players = find_players(data)
+            players = find_players(data, known_players)
             show_players(players)
             continue
 
@@ -458,7 +467,7 @@ def main():
                     print(f'  Updated {STAT_PROPERTIES[key]["name"]} to {val}')
 
                 # Re-scan
-                players = find_players(data)
+                players = find_players(data, known_players)
                 show_players(players)
 
             except ValueError:
@@ -496,7 +505,7 @@ def main():
         print(f'  Done! {prop["name"]} updated to {new_val}')
 
         # Re-scan
-        players = find_players(data)
+        players = find_players(data, known_players)
         show_players(players)
 
 

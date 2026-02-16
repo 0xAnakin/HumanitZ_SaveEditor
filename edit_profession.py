@@ -4,9 +4,8 @@ HumanitZ Save Editor - Profession Changer
 Interactive tool to change player professions in a HumanitZ save file.
 
 Usage:
-    python edit_profession.py [save_file_path]
+    python edit_profession.py <save_file> [--players <PlayerIDMapped.txt>]
 
-If no path is given, uses the default from config.py.
 The tool will:
   1. Scan the save for all profession entries
   2. Show which player each entry belongs to
@@ -17,7 +16,7 @@ The tool will:
 Safety notes:
   - Always creates a backup before any modification.
   - Swapping between professions with the same digit count in their
-    NewEnumerator number (0-9 = 1 digit, 10-16 = 2 digits) is a
+    NewEnumerator number (0-9 = 1 digit, 10+ = 2 digits) is a
     same-length replacement and is completely safe.
   - Cross-group swaps (e.g., NE5 -> NE14) change the FString length,
     which requires updating the int32 length prefix. This is handled
@@ -29,13 +28,14 @@ import sys
 import os
 import struct
 import shutil
+import argparse
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config import DEFAULT_SAVE_FILE, PROFESSIONS, PLAYERS
+from config import PROFESSIONS, DEFAULT_PLAYER_ID_FILE
 from utils import (
-    load_save, write_save, scan_enum_properties,
+    load_save, load_players, write_save, scan_enum_properties,
     find_nearest_player,
 )
 
@@ -67,11 +67,11 @@ def show_professions() -> None:
     print()
 
 
-def rescan_entries(data: bytes) -> list[dict]:
+def rescan_entries(data: bytes, players: dict) -> list[dict]:
     """Re-scan the save data for profession entries with player mapping."""
     entries = scan_enum_properties(data)
     for entry in entries:
-        player, dist = find_nearest_player(data, entry['offset'], PLAYERS)
+        player, dist = find_nearest_player(data, entry['offset'], players)
         entry['player'] = player or 'Unknown'
         entry['player_distance'] = dist
     return entries
@@ -135,18 +135,27 @@ def apply_change(data: bytes, entry: dict, new_num: int,
 
 
 def main():
-    save_file = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SAVE_FILE
+    parser = argparse.ArgumentParser(
+        description='Interactive profession editor for HumanitZ save files'
+    )
+    parser.add_argument('save_file', help='Path to a HumanitZ .sav file')
+    parser.add_argument('--players', default=DEFAULT_PLAYER_ID_FILE,
+                        help='Path to PlayerIDMapped.txt (default: %(default)s)')
+    args = parser.parse_args()
 
+    save_file = args.save_file
     if not os.path.exists(save_file):
         print(f'Error: Save file not found: {save_file}')
-        print(f'Usage: python edit_profession.py [save_file_path]')
         sys.exit(1)
+
+    players = load_players(args.players)
+    print(f'Loaded {len(players)} player(s) from {args.players}')
 
     data = load_save(save_file)
     print(f'Save file: {save_file}')
     print(f'Size: {len(data):,} bytes')
 
-    entries = rescan_entries(data)
+    entries = rescan_entries(data, players)
 
     if not entries:
         print('No profession entries found in save file.')
@@ -226,7 +235,7 @@ def main():
         data = apply_change(data, entry, new_num, save_file)
 
         # Re-scan after modification
-        entries = rescan_entries(data)
+        entries = rescan_entries(data, players)
         print('\n  Updated entries:')
         show_entries(entries)
 
