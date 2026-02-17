@@ -47,6 +47,7 @@ from utils import load_save, load_players, write_save
 STEAMID_PROP = b'SteamID_67_6AFAA3B54A4447673EFF4D94BA0F84A7'
 
 STARTING_PERK_PROP = b'StartingPerk_94_283EA71B427B7E97C43350818608A5E4'
+UNLOCKED_PROF_PROP = b'UnlockedProfessionArr_17_2528BAE945B7A3B1A49D7893990D13BF'
 ENUM_PREFIX = 'Enum_Professions::NewEnumerator'
 
 STAT_PROPERTIES = {
@@ -248,18 +249,114 @@ def apply_stat_change(data: bytes, stat: dict, new_value, save_file: str,
     return data
 
 
+def _add_to_unlocked_professions(data: bytes, player: dict,
+                                  enum_num: int) -> tuple[bytes, bool]:
+    """Add a profession to the player's UnlockedProfessionArr if not already present.
+
+    Returns (modified_data, was_added).
+    """
+    region = data[player['struct_start']:player['struct_end']]
+    prop_idx = region.find(UNLOCKED_PROF_PROP)
+    if prop_idx == -1:
+        return data, False
+
+    abs_base = player['struct_start'] + prop_idx
+    chunk = data[abs_base:]
+
+    # Parse header
+    pos = len(UNLOCKED_PROF_PROP) + 1           # name + null
+    type_len = struct.unpack_from('<i', chunk, pos)[0]
+    pos += 4 + type_len                          # type FString
+
+    prop_size_abs = abs_base + pos
+    prop_size_val = struct.unpack_from('<Q', chunk, pos)[0]
+    pos += 8
+
+    inner_len = struct.unpack_from('<i', chunk, pos)[0]
+    pos += 4 + inner_len + 1                     # inner type FString + separator
+
+    count_abs = abs_base + pos
+    count_val = struct.unpack_from('<i', chunk, pos)[0]
+    pos += 4
+
+    # Check if already present
+    target_str = f'{ENUM_PREFIX}{enum_num}'
+    for i in range(count_val):
+        entry_len = struct.unpack_from('<i', chunk, pos)[0]
+        entry_str = chunk[pos + 4:pos + 4 + entry_len - 1].decode('ascii', 'replace')
+        if entry_str == target_str:
+            return data, False      # already in the array
+        pos += 4 + entry_len
+
+    insert_abs = abs_base + pos
+
+    # Build new FString entry
+    new_entry_str = target_str.encode('ascii') + b'\x00'
+    new_entry = struct.pack('<i', len(new_entry_str)) + new_entry_str
+
+    # Insert entry, update count, update property size
+    data = data[:insert_abs] + new_entry + data[insert_abs:]
+    data = (data[:count_abs] +
+            struct.pack('<i', count_val + 1) +
+            data[count_abs + 4:])
+    data = (data[:prop_size_abs] +
+            struct.pack('<Q', prop_size_val + len(new_entry)) +
+            data[prop_size_abs + 8:])
+
+    return data, True
+
+
 def apply_profession_change(data: bytes, player: dict, new_num: int,
                             save_file: str, backup_created: list) -> bytes:
-    """Change a player's starting profession enum value. Returns modified data.
-    
-    Only modifies the StartingPerk property. The UnlockedProfessionArr
-    (professions unlocked at level 30 and 60) is left untouched.
+    """Change a player's starting profession and preserve the old one.
+
+    1. Adds the old profession to UnlockedProfessionArr (if not already there)
+       so it remains available in the skill tree.
+    2. Updates StartingPerk to the new profession.
     """
     _ensure_backup(save_file, backup_created)
 
     prof = player['profession']
+    old_num = prof['enum_num']
     old_enum_str = prof['enum_str']
     new_enum_str = f'{ENUM_PREFIX}{new_num}'
+
+    # Preserve the old profession in UnlockedProfessionArr
+    data, added = _add_to_unlocked_professions(data, player, old_num)
+    if added:
+        old_name = PROFESSIONS.get(old_num, f'NE{old_num}')
+        print(f'  Added {old_name} (NE{old_num}) to UnlockedProfessionArr'
+              f' (preserving old profession).')
+        # struct_end shifted by the inserted bytes — recalculate
+        entry_bytes = len(f'{ENUM_PREFIX}{old_num}'.encode('ascii')) + 1 + 4  # FString
+        player = dict(player)
+        player['struct_end'] += entry_bytes
+        # Recalculate profession offsets in the new data
+        region = data[player['struct_start']:player['struct_end']]
+        perk_idx = region.find(STARTING_PERK_PROP)
+        if perk_idx != -1:
+            abs_off = player['struct_start'] + perk_idx
+            name_end = abs_off + len(STARTING_PERK_PROP) + 1
+            tlen = struct.unpack_from('<i', data, name_end)[0]
+            type_end = name_end + 4 + tlen
+            size_off = type_end
+            size_val = struct.unpack_from('<Q', data, size_off)[0]
+            enum_type_off = size_off + 8
+            enum_type_len = struct.unpack_from('<i', data, enum_type_off)[0]
+            separator_off = enum_type_off + 4 + enum_type_len
+            val_len_off = separator_off + 1
+            val_len = struct.unpack_from('<i', data, val_len_off)[0]
+            val_str_off = val_len_off + 4
+            prof = {
+                'enum_num': old_num,
+                'enum_str': old_enum_str,
+                'display': prof['display'],
+                'val_len_off': val_len_off,
+                'val_str_off': val_str_off,
+                'val_len': val_len,
+                'size_off': size_off,
+                'size_val': size_val,
+            }
 
     old_val_bytes = old_enum_str.encode('ascii') + b'\x00'
     new_val_bytes = new_enum_str.encode('ascii') + b'\x00'
