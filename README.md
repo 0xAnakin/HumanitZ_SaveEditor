@@ -113,7 +113,7 @@ python src/edit_stats.py <save_file> [--players <PlayerIDMapped.txt>]
 - Finds all players automatically via SteamID struct boundaries
 - Displays current stats and profession for every player
 - Edit individual stats, batch-edit (Level + Skill Points + XP), or change profession
-- Profession changes automatically update the unlocked professions array
+- Profession swap changes the StartingPerk enum in-place (skill tree state is preserved)
 - Stat edits are fixed-size in-place overwrites — file size never changes
 - Creates a timestamped backup before the first modification
 
